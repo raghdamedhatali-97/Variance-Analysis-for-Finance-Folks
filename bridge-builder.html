@@ -800,7 +800,7 @@ document.getElementById("b-pdf").addEventListener("click", async ()=>{
       const body = [[scenName(p.base), fmt(r.start), "", fmt(r.start)]].concat(r.items.map(it=>{ cum += it.value; return [it.label + (it.oneOff?" (one-off)":""), fmtS(it.value), r.start?pct(it.value/Math.abs(r.start)):"–", fmt(cum)]; })).concat([[scenName(p.comp), fmt(r.end), pct(r.pctChg), fmt(cum)]]);
       doc.autoTable({startY:y+6, head:[["Bridge item","Impact","% of base","Running total"]], body: body.map(r=>r.map(pdfT)), margin:{left:M,right:M}, styles:{fontSize:9,cellPadding:4,textColor:[19,33,46]},
         headStyles:{fillColor:[42,61,80],textColor:255}, columnStyles:{1:{halign:"right"},2:{halign:"right"},3:{halign:"right"}},
-        didParseCell: d=>{ if(d.section==="body" && (d.row.index===0 || d.row.index===body.length-1)) d.cell.styles.fontStyle="bold";
+        didParseCell: d=>{ if(d.section==="head" && d.column.index>0) d.cell.styles.halign="right"; if(d.section==="body" && (d.row.index===0 || d.row.index===body.length-1)) d.cell.styles.fontStyle="bold";
           if(d.section==="body" && d.column.index===1 && d.row.index>0 && d.row.index<body.length-1){ const v = r.items[d.row.index-1].value; d.cell.styles.textColor = v<0?[180,55,46]:[28,122,78]; } }});
     }
     if(!pages){ toast("Nothing to export yet. Add numbers for at least one view."); return; }
