@@ -1,0 +1,819 @@
+<title>Bridge Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<style>
+/* Layout: one working column. Header → 1 Data grid (Excel-like) → 2 Bridge (perspective tabs, waterfall, table, commentary, exports) */
+:root{
+  --bg:#f3f6f8; --surface:#ffffff; --cell:#f9fbfc; --ink:#13212e; --muted:#5a6b7b; --line:#d7dfe6; --line-strong:#b9c5cf;
+  --accent:#1d5d8a; --accent-ink:#ffffff; --accent-soft:#e3eef6;
+  --up:#1c7a4e; --up-soft:#e2f2ea; --down:#b4372e; --down-soft:#f8e5e3; --total:#2a3d50; --other:#8796a3;
+  --font-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-num:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e151c; --surface:#141e28; --cell:#101921; --ink:#e3eaf0; --muted:#93a3b2; --line:#24313d; --line-strong:#344452;
+  --accent:#6aaedb; --accent-ink:#0b1620; --accent-soft:#18303f;
+  --up:#4cbd85; --up-soft:#16301f; --down:#ec7266; --down-soft:#3a1d1a; --total:#a8bccd; --other:#6c7c8a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e151c; --surface:#141e28; --cell:#101921; --ink:#e3eaf0; --muted:#93a3b2; --line:#24313d; --line-strong:#344452;
+  --accent:#6aaedb; --accent-ink:#0b1620; --accent-soft:#18303f;
+  --up:#4cbd85; --up-soft:#16301f; --down:#ec7266; --down-soft:#3a1d1a; --total:#a8bccd; --other:#6c7c8a; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:14px;line-height:1.45}
+.wrap{max-width:1240px;margin:0 auto;padding-inline:16px;padding-block:20px 56px;display:flex;flex-direction:column;gap:20px}
+h1,h2,h3{font-family:var(--font-display);text-wrap:balance;margin:0}
+h1{font-size:28px;font-weight:700;letter-spacing:-.01em}
+h2{font-size:19px;font-weight:600}
+.eyebrow{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.muted{color:var(--muted)}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px}
+header.top .lede{max-width:62ch;color:var(--muted);margin:6px 0 0}
+.settings{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field label{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}
+input,select,button{font:inherit;color:inherit}
+input[type=text],select{background:var(--surface);border:1px solid var(--line-strong);border-radius:6px;padding:7px 9px;min-width:0}
+input[type=text]:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.btn{border:1px solid var(--line-strong);background:var(--surface);border-radius:6px;padding:7px 12px;cursor:pointer;font-weight:500;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.08);color:var(--accent-ink)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted);padding:4px 8px}
+.btn.ghost:hover{color:var(--down)}
+.btn.small{padding:4px 9px;font-size:13px}
+
+section.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.panel-head{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+.panel-head .step{display:flex;gap:10px;align-items:baseline}
+.step-n{font-family:var(--font-num);font-size:12px;color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:0 5px}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sample-flag{font-size:12px;background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:3px 10px;font-weight:600}
+
+/* Grid */
+.grid-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table.grid{border-collapse:collapse;width:100%;min-width:760px}
+.grid th,.grid td{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:0;vertical-align:middle}
+.grid th:last-child,.grid td:last-child{border-right:0}
+.grid thead th{background:var(--cell);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;text-align:left;padding:8px}
+.grid thead th.scen{padding:4px;min-width:130px}
+.grid thead th.scen input{width:100%;font-weight:600;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink);border-color:transparent;background:transparent}
+.grid thead th.scen input:hover{border-color:var(--line-strong)}
+.scen-head{display:flex;align-items:center;gap:2px}
+.grid td input[type=text]{width:100%;border:0;border-radius:0;background:transparent;padding:8px}
+.grid td input[type=text]:focus{background:var(--accent-soft);outline:none;box-shadow:inset 0 0 0 2px var(--accent)}
+.grid td select{border:0;background:transparent;width:100%;border-radius:0;padding:8px 6px}
+.grid td.v input{text-align:right;font-family:var(--font-num);font-variant-numeric:tabular-nums}
+.grid td.calc{text-align:right;font-family:var(--font-num);font-variant-numeric:tabular-nums;padding:8px;color:var(--muted);background:var(--cell)}
+.grid tr.factor td.name{padding-left:18px}
+.grid tr.factor td.name .fwrap{display:flex;align-items:center}
+.grid tr.factor td.name .fwrap span{color:var(--muted);font-family:var(--font-num);padding-left:6px}
+.grid tr.factor td{background:var(--cell)}
+.grid tr.lineDrv td.name input{font-weight:600}
+.grid td.ctr{text-align:center}
+.grid tr.total td{background:var(--cell);font-weight:600}
+.grid tr.total td.lbl,.grid tr.reported td.lbl{padding:8px}
+.grid tr.total td.calc{color:var(--ink);font-weight:600}
+.grid td.act{width:36px;text-align:center}
+.hint{font-size:12.5px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 18px}
+.hint b{color:var(--ink);font-weight:600}
+.chk{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px}
+.chk input{accent-color:var(--accent);width:15px;height:15px}
+
+/* Bridge */
+.tabs{display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.tab{border:1px solid var(--line);background:var(--cell);border-radius:999px;padding:6px 14px;cursor:pointer;font-weight:500;font-size:13.5px}
+.tab[aria-selected="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.tab .t-sub{opacity:.7;font-size:12px;margin-left:6px}
+.persp-edit{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.kpi{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.kpi .k-l{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpi .k-v{font-family:var(--font-num);font-size:20px;font-weight:500}
+.kpi .k-s{font-size:12.5px;color:var(--muted)}
+.pill{display:inline-block;font-size:12px;font-weight:600;border-radius:999px;padding:1px 8px;font-family:var(--font-body)}
+.pill.up{background:var(--up-soft);color:var(--up)}
+.pill.down{background:var(--down-soft);color:var(--down)}
+.pill.flat{background:var(--cell);color:var(--muted)}
+.chart-box{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.chart-box svg{display:block}
+.two-col{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:16px}
+@media (max-width:900px){.two-col{grid-template-columns:minmax(0,1fr)}}
+.tbl-scroll{overflow-x:auto}
+table.bt{border-collapse:collapse;width:100%;font-size:13.5px}
+.bt th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;text-align:right;padding:6px 8px;border-bottom:1px solid var(--line-strong)}
+.bt th:first-child{text-align:left}
+.bt td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;font-family:var(--font-num);font-variant-numeric:tabular-nums;white-space:nowrap}
+.bt td:first-child{text-align:left;font-family:var(--font-body);white-space:normal}
+.bt tr.tot td{font-weight:600;border-bottom-color:var(--line-strong)}
+.bt td.pos{color:var(--up)} .bt td.neg{color:var(--down)}
+.tag{font-size:10.5px;font-family:var(--font-body);border:1px solid var(--line-strong);border-radius:4px;padding:0 4px;margin-left:6px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.comment{border-left:3px solid var(--accent);padding:4px 0 4px 14px;display:flex;flex-direction:column;gap:8px;max-width:70ch}
+.comment p{margin:0}
+.comment p:first-child{font-weight:600}
+.check{font-size:12.5px}
+.check.ok{color:var(--up)} .check.bad{color:var(--down)}
+.empty{padding:28px;text-align:center;color:var(--muted);border:1px dashed var(--line-strong);border-radius:8px}
+.exports{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:8px;font-size:13.5px;max-width:calc(100% - 32px);z-index:5}
+.confirm{display:flex;gap:8px;align-items:center;font-size:13px}
+@media (prefers-reduced-motion:no-preference){.btn,.tab{transition:border-color .12s,color .12s,background .12s}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="eyebrow">Variance analysis</div>
+      <h1>Bridge Builder</h1>
+      <p class="lede">Name your line items, type or paste the numbers, and the bridge builds itself for every view you need: this year vs last year, actual vs budget, quarter over quarter. Export to Excel or PDF.</p>
+    </div>
+    <div class="settings">
+      <div class="field"><label for="s-title">Metric</label><input id="s-title" type="text" size="14"></div>
+      <div class="field"><label for="s-unit">Unit</label><input id="s-unit" type="text" size="10"></div>
+      <div class="field"><label for="s-dec">Decimals</label>
+        <select id="s-dec"><option value="0">0</option><option value="1">1</option><option value="2">2</option></select></div>
+    </div>
+  </header>
+
+  <section class="panel" aria-labelledby="h-data">
+    <div class="panel-head">
+      <div class="step"><span class="step-n">1</span><h2 id="h-data">Enter your data</h2><span class="sample-flag" id="sample-flag" hidden>Sample numbers, replace with yours</span></div>
+      <div class="toolbar">
+        <button class="btn small" id="b-addline">+ Line item</button>
+        <button class="btn small" id="b-addcol">+ Column</button>
+        <label class="btn small" for="f-import" style="cursor:pointer">Import Excel / CSV</label>
+        <input type="file" id="f-import" accept=".xlsx,.xls,.csv" hidden>
+        <button class="btn small" id="b-template">Template</button>
+        <span id="reset-zone"><button class="btn small" id="b-reset">Start blank</button></span>
+      </div>
+    </div>
+    <div class="grid-scroll"><table class="grid" id="grid"></table></div>
+    <div class="hint">
+      <span><b>Amount</b>: one number per column. <b>Drivers</b>: e.g. Orders × Revenue per order; the bridge splits volume and rate.</span>
+      <span><b>Paste from Excel</b>: click any cell and paste a block. Paste rows with names into a line-item cell to add them all.</span>
+      <span><b>Sign</b>: use “− reduces” for costs in a profit bridge.</span>
+    </div>
+    <label class="chk"><input type="checkbox" id="s-reported"> Check against a reported total (any gap shows as “Unexplained”)</label>
+  </section>
+
+  <section class="panel" aria-labelledby="h-bridge">
+    <div class="panel-head">
+      <div class="step"><span class="step-n">2</span><h2 id="h-bridge">Your bridge</h2></div>
+      <div class="exports">
+        <button class="btn primary" id="b-xlsx">Download Excel</button>
+        <button class="btn primary" id="b-pdf">Download PDF</button>
+      </div>
+    </div>
+    <div class="tabs" role="tablist" id="tabs"></div>
+    <div class="persp-edit" id="persp-edit"></div>
+    <div id="bridge-out"></div>
+  </section>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function(){
+"use strict";
+const STORE_KEY = "bridge-builder-v1";
+let uid = 0; const nid = p => p + Date.now().toString(36) + (uid++);
+
+/* ---------- state ---------- */
+function sampleState(){
+  const S = ["act","ly","bud","pq"];
+  const mk = (a) => Object.fromEntries(S.map((s,i)=>[s,a[i]]));
+  return {
+    sample:true, title:"Revenue", unit:"USD '000", decimals:0, zoom:true, group:0, sort:"order", useReported:false,
+    scen:[{id:"act",name:"Q3 2026 Actual"},{id:"ly",name:"Q3 2025 Actual"},{id:"bud",name:"Q3 2026 Budget"},{id:"pq",name:"Q2 2026 Actual"}],
+    persp:[{id:"p1",name:"vs Last Year",base:"ly",comp:"act"},{id:"p2",name:"vs Budget",base:"bud",comp:"act"},{id:"p3",name:"Quarter over quarter",base:"pq",comp:"act"}],
+    active:"p1", reported:{},
+    lines:[
+      {id:"l1",name:"Subscriptions",kind:"drivers",sign:1,oneOff:false,vals:{},factors:[
+        {name:"Subscriber-months ('000)",vals:mk([119.3,128.6,128.4,121.8])},{name:"ARPU (USD)",vals:mk([37.9,37.95,39.4,37.6])}]},
+      {id:"l2",name:"Shipping",kind:"drivers",sign:1,oneOff:false,vals:{},factors:[
+        {name:"Monetized orders ('000)",vals:mk([6220,4570,6450,5900])},{name:"Revenue per order (USD)",vals:mk([1.59,1.88,1.80,1.57])}]},
+      {id:"l3",name:"Payments",kind:"drivers",sign:1,oneOff:false,vals:{},factors:[
+        {name:"GMV (USD '000)",vals:mk([865000,700000,870000,840000])},{name:"Payment penetration",vals:mk([0.848,0.803,0.813,0.84])},{name:"Take rate",vals:mk([0.0147,0.01473,0.01475,0.0146])}]},
+      {id:"l4",name:"Advertising",kind:"value",sign:1,oneOff:false,vals:mk([245,0,750,210]),factors:[]},
+      {id:"l5",name:"Other revenue",kind:"value",sign:1,oneOff:false,vals:mk([330,318,441,305]),factors:[]},
+      {id:"l6",name:"Contract settlement",kind:"value",sign:1,oneOff:true,vals:mk([180,0,0,0]),factors:[]}
+    ]
+  };
+}
+function blankState(){
+  return {sample:false,title:"Revenue",unit:"USD '000",decimals:0,zoom:true,group:0,sort:"order",useReported:false,
+    scen:[{id:"act",name:"This year Actual"},{id:"ly",name:"Last year Actual"},{id:"bud",name:"This year Budget"},{id:"pq",name:"Last quarter Actual"}],
+    persp:[{id:"p1",name:"vs Last Year",base:"ly",comp:"act"},{id:"p2",name:"vs Budget",base:"bud",comp:"act"},{id:"p3",name:"Quarter over quarter",base:"pq",comp:"act"}],
+    active:"p1",reported:{},
+    lines:[{id:nid("l"),name:"",kind:"value",sign:1,oneOff:false,vals:{},factors:[]},{id:nid("l"),name:"",kind:"value",sign:1,oneOff:false,vals:{},factors:[]},{id:nid("l"),name:"",kind:"value",sign:1,oneOff:false,vals:{},factors:[]}]};
+}
+let state;
+try{ const raw = localStorage.getItem(STORE_KEY); state = raw ? JSON.parse(raw) : null; }catch(e){ state = null; }
+if(!state || !Array.isArray(state.lines) || !Array.isArray(state.scen)) state = sampleState();
+let saveT;
+function save(){ clearTimeout(saveT); saveT = setTimeout(()=>{ try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){} }, 300); }
+
+/* ---------- numbers ---------- */
+function parseNum(s){
+  if(s==null) return null; s = String(s).trim(); if(!s) return null;
+  let neg = false;
+  if(/^\(.*\)$/.test(s)){ neg = true; s = s.slice(1,-1); }
+  let pct = false; if(s.endsWith("%")){ pct = true; s = s.slice(0,-1); }
+  s = s.replace(/[,\s]/g,"").replace(/[−–]/g,"-");
+  if(s==="" || s==="-") return null;
+  let n = Number(s); if(!isFinite(n)) return null;
+  if(pct) n = n/100; return neg ? -n : n;
+}
+const nf = (d) => new Intl.NumberFormat("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+function fmt(n,d){ if(n==null||!isFinite(n)) return "–"; const d0 = d==null ? state.decimals : d; const s = nf(d0).format(Math.abs(n)); return (n<0 && Number(s.replace(/,/g,""))!==0 ? "−" : "") + s; }
+function fmtS(n){ if(n==null||!isFinite(n)) return "–"; const s = fmt(n); return (n>0 && s!==fmt(0)) ? "+"+s : s; }
+function fmtRaw(n){ if(n==null) return ""; return Math.abs(n) >= 1000 ? nf(Math.abs(n)%1 ? Math.min(4,decCount(n)) : 0).format(n) : String(n); }
+function decCount(n){ const s = String(n); const i = s.indexOf("."); return i<0 ? 0 : s.length-i-1; }
+function pct(n){ if(n==null||!isFinite(n)) return "–"; return (n>0?"+":n<0?"−":"") + nf(1).format(Math.abs(n*100)) + "%"; }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+/* ---------- model ---------- */
+function lineVal(l, sid){
+  if(l.kind==="drivers"){
+    if(!l.factors.length) return null;
+    let p = 1; for(const f of l.factors){ const v = f.vals[sid]; if(v==null) return null; p *= v; } return p;
+  }
+  const v = l.vals[sid]; return v==null ? null : v;
+}
+function lineLabel(l,i){ return (l.name||"").trim() || ("Line " + (i+1)); }
+function scenName(id){ const s = state.scen.find(x=>x.id===id); return s ? (s.name||"Untitled column") : "?"; }
+function calcTotal(sid){ let t = 0, any=false; for(const l of state.lines){ const v = lineVal(l,sid); if(v!=null){ t += l.sign*v; any=true; } } return any ? t : null; }
+
+function computeBridge(p){
+  const b = p.base, c = p.comp;
+  const res = {p, items:[], missing:[], ok:true};
+  if(!state.scen.find(s=>s.id===b) || !state.scen.find(s=>s.id===c)){ res.ok=false; res.reason="Pick two columns to compare."; return res; }
+  if(b===c){ res.ok=false; res.reason="Base and comparison are the same column. Pick two different ones."; return res; }
+  const cb = calcTotal(b), cc = calcTotal(c);
+  if(cb==null || cc==null){ res.ok=false; res.reason = "Add numbers in the “" + scenName(cb==null?b:c) + "” column to build this bridge."; return res; }
+  state.lines.forEach((l,i)=>{
+    const name = lineLabel(l,i);
+    if(l.kind==="drivers" && l.factors.length){
+      const B = l.factors.map(f=>f.vals[b]), C = l.factors.map(f=>f.vals[c]);
+      if(B.some(v=>v==null) || C.some(v=>v==null)){ res.missing.push(name); return; }
+      if(l.factors.length===1){ res.items.push({label:name, value:l.sign*(C[0]-B[0]), lineIdx:i, oneOff:l.oneOff}); return; }
+      l.factors.forEach((f,k)=>{
+        let v = C[k]-B[k];
+        for(let j=0;j<k;j++) v *= C[j];
+        for(let j=k+1;j<B.length;j++) v *= B[j];
+        res.items.push({label:name+" · "+((f.name||"").trim()||("Driver "+(k+1))), value:l.sign*v, lineIdx:i, factor:k, oneOff:l.oneOff});
+      });
+    } else {
+      const vb = lineVal(l,b), vc = lineVal(l,c);
+      if(vb==null && vc==null) return;
+      if(vb==null || vc==null) res.missing.push(name);
+      res.items.push({label:name, value:l.sign*((vc||0)-(vb||0)), lineIdx:i, oneOff:l.oneOff});
+    }
+  });
+  let start = cb, end = cc;
+  const rb = state.reported[b], rc = state.reported[c];
+  if(state.useReported && rb!=null && rc!=null){
+    start = rb; end = rc;
+    const rem = (rc-rb) - (cc-cb);
+    if(Math.abs(rem) > 1e-9) res.items.push({label:"Unexplained / not mapped", value:rem, remainder:true});
+  }
+  res.start = start; res.end = end; res.delta = end-start; res.pctChg = start ? (end-start)/Math.abs(start) : null;
+  res.detail = res.items.slice();
+  // display shaping: sort and group small
+  let items = res.items.slice();
+  if(state.sort==="impact") items.sort((x,y)=> (x.remainder?1:0)-(y.remainder?1:0) || Math.abs(y.value)-Math.abs(x.value));
+  if(state.group>0 && start){
+    const thr = Math.abs(start)*state.group/100;
+    const keep = [], small = [];
+    items.forEach(it => (!it.remainder && Math.abs(it.value) < thr ? small : keep).push(it));
+    if(small.length>1){ keep.push({label:"Other movements ("+small.length+")", value:small.reduce((a,x)=>a+x.value,0), other:true}); items = keep; }
+  }
+  res.items = items;
+  return res;
+}
+
+function commentary(r){
+  const p = r.p, T = state.title || "Metric", u = state.unit ? " " + state.unit : "";
+  const dir = r.delta>0 ? "up" : r.delta<0 ? "down" : "flat";
+  const out = [];
+  out.push(`${T} ${dir==="flat"?"is flat":"is "+dir+" "+fmt(Math.abs(r.delta))+u}${r.pctChg!=null && dir!=="flat" ? " ("+pct(r.pctChg)+")" : ""} vs ${scenName(p.base)}: ${fmt(r.start)} → ${fmt(r.end)}.`);
+  const drivers = r.detail.filter(x=>!x.remainder);
+  const pos = drivers.filter(x=>x.value>0).sort((a,b)=>b.value-a.value);
+  const neg = drivers.filter(x=>x.value<0).sort((a,b)=>a.value-b.value);
+  const main = r.delta>=0 ? pos : neg, offs = r.delta>=0 ? neg : pos;
+  const list = a => a.map(x=>`${x.label} (${fmtS(x.value)})`).join(", ");
+  if(main.length) out.push(`Driven by ${list(main.slice(0,3))}${offs.length ? "; partly offset by " + list(offs.slice(0,2)) : ""}.`);
+  else if(offs.length) out.push(`Movements: ${list(offs.slice(0,3))}.`);
+  const top3 = drivers.slice().sort((a,b)=>Math.abs(b.value)-Math.abs(a.value)).slice(0,3).reduce((a,x)=>a+x.value,0);
+  if(drivers.length>3 && r.delta) out.push(`Top three drivers explain ${nf(0).format(Math.abs(top3/r.delta*100))}% of the change.`);
+  const oo = drivers.filter(x=>x.oneOff);
+  if(oo.length){ const s = oo.reduce((a,x)=>a+x.value,0); out.push(`One-offs of ${fmtS(s)} (${oo.map(x=>x.label).join(", ")}). Run-rate change excluding them: ${fmtS(r.delta-s)}.`); }
+  const rem = r.detail.find(x=>x.remainder);
+  if(rem) out.push(`Unexplained gap to the reported total: ${fmtS(rem.value)}. Map it to a line item before sharing.`);
+  if(r.missing.length) out.push(`Incomplete inputs for ${r.missing.join(", ")}; empty cells were treated as 0.`);
+  return out;
+}
+
+/* ---------- grid ---------- */
+const grid = document.getElementById("grid");
+function numInput(sid, val, attrs){ return `<td class="v"><input type="text" inputmode="decimal" class="numcell" data-scen="${sid}" ${attrs} value="${esc(fmtRaw(val))}" aria-label="value"></td>`; }
+function renderGrid(){
+  const sc = state.scen;
+  let h = `<thead><tr><th style="min-width:250px">Line item</th><th style="width:150px">Type</th><th style="width:108px">Sign</th><th style="width:66px" title="Exclude from run-rate in commentary">One-off</th>`;
+  sc.forEach((s,i)=>{ h += `<th class="scen"><div class="scen-head"><input type="text" data-act="scen-name" data-scen="${s.id}" value="${esc(s.name)}" aria-label="Column name">${sc.length>2?`<button class="btn ghost" data-act="del-scen" data-scen="${s.id}" title="Remove column" aria-label="Remove column">×</button>`:""}</div></th>`; });
+  h += `<th class="act"></th></tr></thead><tbody>`;
+  let row = 0;
+  state.lines.forEach((l,i)=>{
+    const common = `<td><select data-act="kind" data-line="${l.id}" aria-label="Type"><option value="value"${l.kind==="value"?" selected":""}>Amount</option><option value="drivers"${l.kind==="drivers"?" selected":""}>Drivers (A×B)</option></select></td>
+      <td><select data-act="sign" data-line="${l.id}" aria-label="Sign"><option value="1"${l.sign===1?" selected":""}>+ adds</option><option value="-1"${l.sign===-1?" selected":""}>− reduces</option></select></td>
+      <td class="ctr"><input type="checkbox" data-act="oneoff" data-line="${l.id}" ${l.oneOff?"checked":""} aria-label="One-off"></td>`;
+    if(l.kind==="drivers"){
+      h += `<tr class="lineDrv"><td class="name"><input type="text" data-act="name" data-line="${l.id}" value="${esc(l.name)}" placeholder="e.g. Shipping revenue"></td>${common}`;
+      sc.forEach(s=>{ h += `<td class="calc" data-calc="${l.id}" data-scen="${s.id}">${fmt(lineVal(l,s.id))}</td>`; });
+      h += `<td class="act"><button class="btn ghost" data-act="del-line" data-line="${l.id}" title="Remove line" aria-label="Remove line">×</button></td></tr>`;
+      l.factors.forEach((f,k)=>{
+        h += `<tr class="factor"><td class="name"><div class="fwrap"><span>${k?"×":"="}</span><input type="text" data-act="fname" data-line="${l.id}" data-k="${k}" value="${esc(f.name)}" placeholder="Driver name"></div></td>
+          <td colspan="3" class="ctr">${k===l.factors.length-1 && l.factors.length<4 ? `<button class="btn ghost small" data-act="add-f" data-line="${l.id}">+ driver</button>`:""}${l.factors.length>2?`<button class="btn ghost small" data-act="del-f" data-line="${l.id}" data-k="${k}">remove</button>`:""}</td>`;
+        sc.forEach(s=>{ h += numInput(s.id, f.vals[s.id], `data-line="${l.id}" data-k="${k}" data-row="${row}"`); });
+        h += `<td class="act"></td></tr>`; row++;
+      });
+    } else {
+      h += `<tr><td class="name"><input type="text" data-act="name" data-line="${l.id}" value="${esc(l.name)}" placeholder="e.g. Subscriptions"></td>${common}`;
+      sc.forEach(s=>{ h += numInput(s.id, l.vals[s.id], `data-line="${l.id}" data-row="${row}"`); });
+      h += `<td class="act"><button class="btn ghost" data-act="del-line" data-line="${l.id}" title="Remove line" aria-label="Remove line">×</button></td></tr>`; row++;
+    }
+  });
+  h += `<tr class="total"><td class="lbl" colspan="4">Total ${esc(state.title||"")}</td>`;
+  sc.forEach(s=>{ h += `<td class="calc" data-total="${s.id}">${fmt(calcTotal(s.id))}</td>`; });
+  h += `<td class="act"></td></tr>`;
+  if(state.useReported){
+    h += `<tr class="reported"><td class="lbl" colspan="4">Reported total <span class="muted">(from the close / P&amp;L)</span></td>`;
+    sc.forEach(s=>{ h += numInput(s.id, state.reported[s.id], `data-act="reported" data-row="${row}"`); });
+    h += `<td class="act"></td></tr>`;
+  }
+  h += `</tbody>`;
+  grid.innerHTML = h;
+}
+function refreshCalcs(){
+  grid.querySelectorAll("[data-calc]").forEach(td=>{ const l = state.lines.find(x=>x.id===td.dataset.calc); if(l) td.textContent = fmt(lineVal(l, td.dataset.scen)); });
+  grid.querySelectorAll("[data-total]").forEach(td=>{ td.textContent = fmt(calcTotal(td.dataset.total)); });
+}
+const findLine = id => state.lines.find(l=>l.id===id);
+function markEdited(){ if(state.sample){ state.sample=false; document.getElementById("sample-flag").hidden = true; } }
+
+function setCellValue(inp, v){
+  const sid = inp.dataset.scen;
+  if(inp.dataset.act==="reported"){ state.reported[sid] = v; return; }
+  const l = findLine(inp.dataset.line); if(!l) return;
+  if(inp.dataset.k!=null) l.factors[+inp.dataset.k].vals[sid] = v; else l.vals[sid] = v;
+}
+grid.addEventListener("input", e=>{
+  const t = e.target, a = t.dataset.act;
+  if(t.classList.contains("numcell")) setCellValue(t, parseNum(t.value));
+  else if(a==="name"){ findLine(t.dataset.line).name = t.value; }
+  else if(a==="fname"){ findLine(t.dataset.line).factors[+t.dataset.k].name = t.value; }
+  else if(a==="scen-name"){ state.scen.find(s=>s.id===t.dataset.scen).name = t.value; renderTabs(); renderPerspEdit(); }
+  else return;
+  markEdited(); refreshCalcs(); renderBridge(); save();
+});
+grid.addEventListener("change", e=>{
+  const t = e.target, a = t.dataset.act; const l = t.dataset.line ? findLine(t.dataset.line) : null;
+  if(a==="kind"){
+    if(t.value==="drivers" && l.kind!=="drivers"){
+      const keep = Object.assign({}, l.vals);
+      l.factors = l.factors && l.factors.length ? l.factors : [{name:"Volume",vals:keep},{name:"Rate",vals:Object.fromEntries(Object.keys(keep).map(k=>[k,keep[k]==null?null:1]))}];
+    } else if(t.value==="value" && l.kind==="drivers"){
+      state.scen.forEach(s=>{ l.vals[s.id] = lineVal(l,s.id); });
+    }
+    l.kind = t.value; renderGrid();
+  } else if(a==="sign"){ l.sign = +t.value; }
+  else if(a==="oneoff"){ l.oneOff = t.checked; }
+  else if(t.classList.contains("numcell")){ t.value = fmtRaw(parseNum(t.value)); return; }
+  else return;
+  markEdited(); refreshCalcs(); renderBridge(); save();
+});
+grid.addEventListener("click", e=>{
+  const b = e.target.closest("button"); if(!b) return; const a = b.dataset.act;
+  if(a==="del-line"){ state.lines = state.lines.filter(l=>l.id!==b.dataset.line); }
+  else if(a==="add-f"){ findLine(b.dataset.line).factors.push({name:"",vals:{}}); }
+  else if(a==="del-f"){ findLine(b.dataset.line).factors.splice(+b.dataset.k,1); }
+  else if(a==="del-scen"){
+    const id = b.dataset.scen; state.scen = state.scen.filter(s=>s.id!==id);
+    state.persp.forEach(p=>{ if(p.base===id) p.base = ""; if(p.comp===id) p.comp = ""; });
+  } else return;
+  markEdited(); renderAll(); save();
+});
+grid.addEventListener("paste", e=>{
+  const t = e.target; const text = (e.clipboardData||window.clipboardData).getData("text");
+  if(!text || !/[\t\n]/.test(text.trim())) return;
+  const rows = text.replace(/\r/g,"").split("\n").filter((r,i,a)=>!(i===a.length-1 && r==="")).map(r=>r.split("\t"));
+  if(t.dataset.act==="name"){
+    // rows of: name, v1, v2...  → value lines inserted from this line
+    e.preventDefault();
+    const idx = state.lines.findIndex(l=>l.id===t.dataset.line);
+    const newLines = rows.filter(r=>r.join("").trim()).map(r=>({id:nid("l"),name:r[0].trim(),kind:"value",sign:1,oneOff:false,factors:[],
+      vals:Object.fromEntries(state.scen.map((s,j)=>[s.id, parseNum(r[j+1])]))}));
+    const cur = state.lines[idx]; const curEmpty = cur && !cur.name.trim() && cur.kind==="value" && state.scen.every(s=>cur.vals[s.id]==null);
+    state.lines.splice(idx, curEmpty?1:0, ...newLines);
+    markEdited(); renderAll(); save(); toast(`Added ${newLines.length} line item${newLines.length===1?"":"s"}.`);
+    return;
+  }
+  if(!t.classList.contains("numcell")) return;
+  e.preventDefault();
+  const r0 = +t.dataset.row, c0 = state.scen.findIndex(s=>s.id===t.dataset.scen);
+  let n = 0;
+  rows.forEach((r,ri)=>r.forEach((cell,ci)=>{
+    const sc = state.scen[c0+ci]; if(!sc) return;
+    const inp = grid.querySelector(`.numcell[data-row="${r0+ri}"][data-scen="${sc.id}"]`); if(!inp) return;
+    const v = parseNum(cell); setCellValue(inp, v); inp.value = fmtRaw(v); n++;
+  }));
+  markEdited(); refreshCalcs(); renderBridge(); save(); toast(`Pasted ${n} cell${n===1?"":"s"}.`);
+});
+
+/* keyboard: Enter moves down like Excel */
+grid.addEventListener("keydown", e=>{
+  const t = e.target; if(e.key!=="Enter" || !t.classList.contains("numcell")) return;
+  e.preventDefault();
+  const nx = grid.querySelector(`.numcell[data-row="${+t.dataset.row + (e.shiftKey?-1:1)}"][data-scen="${t.dataset.scen}"]`);
+  if(nx){ nx.focus(); nx.select(); }
+});
+
+/* ---------- header settings ---------- */
+const sTitle = document.getElementById("s-title"), sUnit = document.getElementById("s-unit"), sDec = document.getElementById("s-dec"), sRep = document.getElementById("s-reported");
+function syncSettings(){ sTitle.value = state.title; sUnit.value = state.unit; sDec.value = String(state.decimals); sRep.checked = !!state.useReported; document.getElementById("sample-flag").hidden = !state.sample; }
+sTitle.addEventListener("input", ()=>{ state.title = sTitle.value; refreshCalcs(); grid.querySelector(".total .lbl").textContent = "Total " + state.title; renderBridge(); save(); });
+sUnit.addEventListener("input", ()=>{ state.unit = sUnit.value; renderBridge(); save(); });
+sDec.addEventListener("change", ()=>{ state.decimals = +sDec.value; refreshCalcs(); renderBridge(); save(); });
+sRep.addEventListener("change", ()=>{ state.useReported = sRep.checked; renderGrid(); renderBridge(); save(); });
+
+document.getElementById("b-addline").addEventListener("click", ()=>{
+  state.lines.push({id:nid("l"),name:"",kind:"value",sign:1,oneOff:false,vals:{},factors:[]}); renderGrid(); save();
+  const ins = grid.querySelectorAll('input[data-act="name"]'); ins[ins.length-1].focus();
+});
+document.getElementById("b-addcol").addEventListener("click", ()=>{
+  const id = nid("s"); state.scen.push({id, name:"New column"}); renderAll(); save();
+  const inp = grid.querySelector(`input[data-act="scen-name"][data-scen="${id}"]`); if(inp){ inp.focus(); inp.select(); }
+});
+const resetZone = document.getElementById("reset-zone");
+function resetButtons(){
+  resetZone.innerHTML = state.sample ? `<button class="btn small" id="b-reset">Start blank</button>` : `<button class="btn small" id="b-reset">Reset…</button>`;
+}
+resetZone.addEventListener("click", e=>{
+  const b = e.target.closest("button"); if(!b) return;
+  if(b.id==="b-reset"){
+    if(state.sample){ state = blankState(); renderAll(); save(); toast("Blank grid ready. Name your line items and columns."); return; }
+    resetZone.innerHTML = `<span class="confirm">Clear your data? <button class="btn small" data-r="blank">Blank grid</button><button class="btn small" data-r="sample">Load sample</button><button class="btn small" data-r="cancel">Cancel</button></span>`;
+    return;
+  }
+  const r = b.dataset.r;
+  if(r==="blank") state = blankState(); else if(r==="sample") state = sampleState();
+  renderAll(); save();
+});
+
+/* ---------- perspectives ---------- */
+const tabsEl = document.getElementById("tabs"), peEl = document.getElementById("persp-edit");
+function renderTabs(){
+  let h = "";
+  state.persp.forEach(p=>{
+    const lbl = (p.base && p.comp) ? `${scenName(p.comp)} vs ${scenName(p.base)}` : "Set columns";
+    h += `<button class="tab" role="tab" aria-selected="${p.id===state.active}" data-p="${p.id}">${esc(p.name||"View")}<span class="t-sub">${esc(lbl)}</span></button>`;
+  });
+  h += `<button class="tab" data-p="__add" title="Add another comparison">+ Add view</button>`;
+  tabsEl.innerHTML = h;
+}
+function renderPerspEdit(){
+  const p = state.persp.find(x=>x.id===state.active); if(!p){ peEl.innerHTML=""; return; }
+  const opts = sel => `<option value="">Choose…</option>` + state.scen.map(s=>`<option value="${s.id}"${s.id===sel?" selected":""}>${esc(s.name)}</option>`).join("");
+  peEl.innerHTML = `
+    <div class="field"><label for="pe-name">View name</label><input type="text" id="pe-name" value="${esc(p.name)}" size="18"></div>
+    <div class="field"><label for="pe-base">From (base)</label><select id="pe-base">${opts(p.base)}</select></div>
+    <div class="field"><label for="pe-comp">To (compare)</label><select id="pe-comp">${opts(p.comp)}</select></div>
+    <div class="field"><label for="pe-sort">Order bars</label><select id="pe-sort"><option value="order"${state.sort==="order"?" selected":""}>As entered</option><option value="impact"${state.sort==="impact"?" selected":""}>Biggest impact first</option></select></div>
+    <div class="field"><label for="pe-group">Group small items</label><select id="pe-group">${[0,0.5,1,2,5].map(g=>`<option value="${g}"${state.group===g?" selected":""}>${g?"< "+g+"% of base":"Off"}</option>`).join("")}</select></div>
+    <label class="chk"><input type="checkbox" id="pe-zoom" ${state.zoom?"checked":""}> Zoom axis</label>
+    ${state.persp.length>1?`<button class="btn small" id="pe-del">Remove view</button>`:""}`;
+}
+tabsEl.addEventListener("click", e=>{
+  const b = e.target.closest(".tab"); if(!b) return;
+  if(b.dataset.p==="__add"){
+    const id = nid("p"); state.persp.push({id,name:"Custom view",base:state.scen[1]?.id||"",comp:state.scen[0]?.id||""}); state.active = id;
+  } else state.active = b.dataset.p;
+  renderTabs(); renderPerspEdit(); renderBridge(); save();
+});
+peEl.addEventListener("input", e=>{ if(e.target.id==="pe-name"){ state.persp.find(x=>x.id===state.active).name = e.target.value; renderTabs(); save(); } });
+peEl.addEventListener("change", e=>{
+  const p = state.persp.find(x=>x.id===state.active), t = e.target;
+  if(t.id==="pe-base") p.base = t.value; else if(t.id==="pe-comp") p.comp = t.value;
+  else if(t.id==="pe-sort") state.sort = t.value; else if(t.id==="pe-group") state.group = +t.value; else if(t.id==="pe-zoom") state.zoom = t.checked; else return;
+  renderTabs(); renderBridge(); save();
+});
+peEl.addEventListener("click", e=>{
+  if(e.target.id!=="pe-del") return;
+  state.persp = state.persp.filter(x=>x.id!==state.active); state.active = state.persp[0].id; renderTabs(); renderPerspEdit(); renderBridge(); save();
+});
+
+/* ---------- chart ---------- */
+function palette(){
+  const cs = getComputedStyle(document.documentElement), g = n => cs.getPropertyValue(n).trim();
+  return {up:g("--up"),down:g("--down"),total:g("--total"),other:g("--other"),ink:g("--ink"),muted:g("--muted"),line:g("--line"),bg:g("--surface"),font:"IBM Plex Sans, system-ui, sans-serif",num:"IBM Plex Mono, ui-monospace, monospace"};
+}
+const PDF_PAL = {up:"#1c7a4e",down:"#b4372e",total:"#2a3d50",other:"#8796a3",ink:"#13212e",muted:"#5a6b7b",line:"#d7dfe6",bg:"#ffffff",font:"Helvetica, Arial, sans-serif",num:"Helvetica, Arial, sans-serif"};
+function niceStep(range, target){ const raw = range/Math.max(1,target); const p = Math.pow(10, Math.floor(Math.log10(raw))); const m = raw/p; return (m<1.5?1:m<3?2:m<7?5:10)*p; }
+function wrapLabel(s, max){
+  const words = s.split(/\s+/); const lines = []; let cur = "";
+  words.forEach(w=>{ if((cur+" "+w).trim().length > max && cur){ lines.push(cur); cur = w; } else cur = (cur+" "+w).trim(); });
+  if(cur) lines.push(cur);
+  if(lines.length>3){ lines.length = 3; lines[2] = lines[2].slice(0,max-1) + "…"; }
+  return lines;
+}
+function waterfallSVG(r, pal, W, opt){
+  opt = opt||{};
+  const bars = [{label:scenName(r.p.base), value:r.start, total:true}];
+  let cum = r.start;
+  r.items.forEach(it=>{ bars.push(Object.assign({}, it, {y0:cum, y1:cum+it.value})); cum += it.value; });
+  bars.push({label:scenName(r.p.comp), value:r.end, total:true});
+  bars.forEach(b=>{ if(b.total){ b.y0 = 0; b.y1 = b.value; } });
+  const n = bars.length;
+  const H = opt.H || 400, mT = 34, mB = 66, mL = 70, mR = 16;
+  W = Math.max(W, mL + mR + n*78);
+  const vals = bars.flatMap(b=> b.total ? [b.value] : [b.y0,b.y1]);
+  let hi = Math.max(...vals), lo = Math.min(...vals, 0);
+  let zoomed = false;
+  if(state.zoom && Math.min(...vals) > 0){
+    const mn = Math.min(...bars.filter(b=>!b.total).flatMap(b=>[b.y0,b.y1]), r.start, r.end);
+    const span = hi - mn; const floor = mn - Math.max(span*0.35, Math.abs(hi)*0.02);
+    if(floor > 0){ lo = floor; zoomed = true; }
+  }
+  if(hi===lo){ hi = lo + 1; }
+  const step = niceStep(hi-lo, 5);
+  lo = zoomed ? Math.floor(lo/step)*step : Math.min(0, Math.floor(lo/step)*step);
+  hi = Math.ceil(hi/step)*step + (hi%step===0 ? step*0.0 : 0);
+  if(hi - Math.max(...vals) < step*0.25) hi += step*0.5;
+  const ph = H - mT - mB, pw = W - mL - mR;
+  const y = v => mT + ph * (1 - (v-lo)/(hi-lo));
+  const slot = pw/n, bw = Math.min(64, slot*0.62);
+  const xc = i => mL + slot*(i+0.5);
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Waterfall chart">`;
+  s += `<rect x="0" y="0" width="${W}" height="${H}" fill="${pal.bg}"/>`;
+  for(let v = lo; v <= hi + step*1e-6; v += step){
+    const yy = y(v).toFixed(1);
+    s += `<line x1="${mL}" x2="${W-mR}" y1="${yy}" y2="${yy}" stroke="${pal.line}" stroke-width="1"/>`;
+    s += `<text x="${mL-8}" y="${(+yy+4)}" text-anchor="end" font-family="${pal.num}" font-size="11" fill="${pal.muted}">${esc(fmt(v, Math.abs(step)<1?Math.min(3,decCount(step)):0))}</text>`;
+  }
+  if(zoomed) s += `<text x="${mL}" y="${H-6}" font-family="${pal.font}" font-size="10.5" fill="${pal.muted}">Axis starts at ${esc(fmt(lo,0))}, not zero</text>`;
+  bars.forEach((b,i)=>{
+    const top = Math.max(b.y0,b.y1), bot = Math.min(b.y0,b.y1);
+    const yt = y(top), yb = y(Math.max(bot, lo));
+    const h = Math.max(1.5, yb-yt);
+    const col = b.total ? pal.total : b.remainder || b.other ? pal.other : b.value>=0 ? pal.up : pal.down;
+    const x = xc(i)-bw/2;
+    s += `<rect x="${x.toFixed(1)}" y="${yt.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${col}" ${b.oneOff?`fill-opacity="0.45" stroke="${col}" stroke-width="1.5" stroke-dasharray="4 3"`:""} rx="1.5"/>`;
+    if(zoomed && b.total){ const yy = y(lo); s += `<path d="M${(x-3).toFixed(1)} ${(yy-6).toFixed(1)} l${(bw+6).toFixed(1)} -6 M${(x-3).toFixed(1)} ${(yy-1).toFixed(1)} l${(bw+6).toFixed(1)} -6" stroke="${pal.bg}" stroke-width="3" fill="none"/>`; }
+    const lbl = b.total ? fmt(b.value) : fmtS(b.value);
+    s += `<text x="${xc(i).toFixed(1)}" y="${(yt-7).toFixed(1)}" text-anchor="middle" font-family="${pal.num}" font-size="11.5" font-weight="${b.total?600:500}" fill="${b.total?pal.ink:col}">${esc(lbl)}</text>`;
+    if(i < n-1){ const lv = b.total ? b.value : b.y1; const yy = y(lv).toFixed(1); s += `<line x1="${(x+bw).toFixed(1)}" x2="${(xc(i+1)-bw/2).toFixed(1)}" y1="${yy}" y2="${yy}" stroke="${pal.muted}" stroke-width="1" stroke-dasharray="3 3"/>`; }
+    const lines = wrapLabel(b.label + (b.oneOff?" (one-off)":""), Math.max(9, Math.floor(slot/6.6)));
+    lines.forEach((ln,k)=>{ s += `<text x="${xc(i).toFixed(1)}" y="${(H-mB+18+k*13).toFixed(1)}" text-anchor="middle" font-family="${pal.font}" font-size="11" font-weight="${b.total?600:400}" fill="${b.total?pal.ink:pal.muted}">${esc(ln)}</text>`; });
+  });
+  s += `<line x1="${mL}" x2="${W-mR}" y1="${y(lo).toFixed(1)}" y2="${y(lo).toFixed(1)}" stroke="${pal.muted}" stroke-width="1"/>`;
+  s += `</svg>`;
+  return {svg:s, W, H};
+}
+
+/* ---------- bridge output ---------- */
+const out = document.getElementById("bridge-out");
+function renderBridge(){
+  const p = state.persp.find(x=>x.id===state.active);
+  if(!p){ out.innerHTML = `<div class="empty">Add a view to compare two columns.</div>`; return; }
+  const r = computeBridge(p);
+  if(!r.ok){ out.innerHTML = `<div class="empty">${esc(r.reason)}</div>`; return; }
+  const dirCls = r.delta>0?"up":r.delta<0?"down":"flat";
+  const cm = commentary(r);
+  const drivers = r.detail.filter(x=>!x.remainder);
+  const big = drivers.slice().sort((a,b)=>Math.abs(b.value)-Math.abs(a.value))[0];
+  const oo = drivers.filter(x=>x.oneOff).reduce((a,x)=>a+x.value,0);
+  let h = `<div class="kpis">
+    <div class="kpi"><span class="k-l">${esc(scenName(p.base))}</span><span class="k-v">${fmt(r.start)}</span><span class="k-s">${esc(state.unit)}</span></div>
+    <div class="kpi"><span class="k-l">${esc(scenName(p.comp))}</span><span class="k-v">${fmt(r.end)}</span><span class="k-s">${esc(state.unit)}</span></div>
+    <div class="kpi"><span class="k-l">Variance</span><span class="k-v">${fmtS(r.delta)}</span><span class="k-s"><span class="pill ${dirCls}">${pct(r.pctChg)}</span></span></div>
+    <div class="kpi"><span class="k-l">Biggest driver</span><span class="k-v">${big?fmtS(big.value):"–"}</span><span class="k-s">${big?esc(big.label):""}</span></div>
+    ${oo?`<div class="kpi"><span class="k-l">Run-rate variance</span><span class="k-v">${fmtS(r.delta-oo)}</span><span class="k-s">excl. one-offs ${fmtS(oo)}</span></div>`:""}
+  </div>`;
+  const ch = waterfallSVG(r, palette(), Math.max(320, out.clientWidth - 2));
+  h += `<div class="chart-box">${ch.svg}</div>`;
+  h += `<div class="two-col"><div class="tbl-scroll"><table class="bt"><thead><tr><th>Bridge item</th><th>Impact</th><th>% of base</th><th>Share of variance</th><th>Running total</th></tr></thead><tbody>`;
+  h += `<tr class="tot"><td>${esc(scenName(p.base))}</td><td>${fmt(r.start)}</td><td></td><td></td><td>${fmt(r.start)}</td></tr>`;
+  let cum = r.start;
+  r.items.forEach(it=>{ cum += it.value;
+    h += `<tr><td>${esc(it.label)}${it.oneOff?'<span class="tag">one-off</span>':""}${it.remainder?'<span class="tag">check</span>':""}</td><td class="${it.value>0?"pos":it.value<0?"neg":""}">${fmtS(it.value)}</td><td>${r.start?pct(it.value/Math.abs(r.start)):"–"}</td><td>${r.delta?fmt(it.value/r.delta*100,0)+"%":"–"}</td><td>${fmt(cum)}</td></tr>`; });
+  h += `<tr class="tot"><td>${esc(scenName(p.comp))}</td><td>${fmt(r.end)}</td><td>${pct(r.pctChg)}</td><td>100%</td><td>${fmt(cum)}</td></tr></tbody></table></div>`;
+  const diff = cum - r.end;
+  h += `<div style="display:flex;flex-direction:column;gap:10px;min-width:0"><div class="eyebrow">Commentary</div><div class="comment" id="comment">${cm.map(c=>`<p>${esc(c)}</p>`).join("")}</div>
+    <div class="toolbar"><button class="btn small" id="b-copy">Copy commentary</button><span class="check ${Math.abs(diff)<1e-6?"ok":"bad"}">${Math.abs(diff)<1e-6?"✓ Bridge reconciles to "+esc(scenName(p.comp)):"Bridge is off by "+fmtS(diff)}</span></div></div></div>`;
+  out.innerHTML = h;
+}
+out.addEventListener("click", e=>{
+  if(e.target.id!=="b-copy") return;
+  const el = document.getElementById("comment"), txt = [...el.querySelectorAll("p")].map(p=>p.textContent).join("\n");
+  const fallback = ()=>{ const rg = document.createRange(); rg.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(rg); toast("Selected. Press Ctrl/Cmd+C to copy."); };
+  try{ navigator.clipboard.writeText(txt).then(()=>toast("Commentary copied."), fallback); }catch(err){ fallback(); }
+});
+
+/* ---------- downloads ---------- */
+let downloadsP = null;
+function getDownloads(){
+  if(!downloadsP) downloadsP = (window.claude && typeof window.claude.use==="function") ? window.claude.use("downloads").catch(()=>null) : Promise.resolve(null);
+  return downloadsP;
+}
+async function saveFile(filename, data){
+  const dl = await getDownloads();
+  if(dl){
+    try{ await dl.save({filename, data}); toast("Saved " + filename); }
+    catch(err){ if(err && err.code==="declined") toast("Download cancelled."); else if(err && err.code==="rate_limited") toast("A download prompt is already open."); else toast("Download is not available here (" + (err&&err.code||"error") + ")."); }
+    return;
+  }
+  const blob = data instanceof Blob ? data : new Blob([data]);
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1500); toast("Downloaded " + filename);
+}
+const safeName = s => (s||"bridge").replace(/[^\w\- ]+/g,"").trim().replace(/\s+/g,"_") || "bridge";
+
+/* ---------- Excel export (live formulas) ---------- */
+function buildWorkbook(){
+  const X = XLSX, wb = X.utils.book_new(), C = X.utils.encode_col;
+  const NF = state.decimals ? "#,##0." + "0".repeat(state.decimals) + ";(#,##0." + "0".repeat(state.decimals) + ")" : "#,##0;(#,##0)";
+  const put = (ws,r,c,v,f,z,t) => { const cell = {}; if(f){ cell.f = f; } if(typeof v==="number"){ cell.t="n"; cell.v=v; } else if(v==null){ if(!f) return; cell.t="n"; cell.v=0; } else { cell.t="s"; cell.v=String(v); } if(z) cell.z = z; ws[X.utils.encode_cell({r,c})] = cell; };
+  const finish = (ws,maxR,maxC,cols) => { ws["!ref"] = X.utils.encode_range({s:{r:0,c:0},e:{r:maxR,c:maxC}}); ws["!cols"] = cols; };
+
+  // Inputs sheet
+  const IN = {}; const sc = state.scen; const col0 = 4;
+  put(IN,0,0,`${state.title||"Metric"} bridge inputs`); put(IN,1,0,`Unit: ${state.unit}`);
+  ["Line item","Driver","Sign (+1/−1)","One-off"].concat(sc.map(s=>s.name)).forEach((h,c)=>put(IN,3,c,h));
+  let r = 4; const map = []; // per line: {valueRow, factorRows[]}
+  state.lines.forEach((l,i)=>{
+    const name = lineLabel(l,i), m = {factorRows:[]};
+    if(l.kind==="drivers" && l.factors.length){
+      l.factors.forEach((f,k)=>{ put(IN,r,0,name); put(IN,r,1,(f.name||"Driver "+(k+1))); put(IN,r,2,l.sign); put(IN,r,3,l.oneOff?"Y":"");
+        sc.forEach((s,j)=>put(IN,r,col0+j,f.vals[s.id]==null?null:f.vals[s.id],null,"#,##0.####")); m.factorRows.push(r+1); r++; });
+      put(IN,r,0,name); put(IN,r,1,"= product of drivers"); put(IN,r,2,l.sign); put(IN,r,3,l.oneOff?"Y":"");
+      sc.forEach((s,j)=>{ const cl = C(col0+j); put(IN,r,col0+j,lineVal(l,s.id),m.factorRows.map(fr=>cl+fr).join("*"),NF); });
+    } else {
+      put(IN,r,0,name); put(IN,r,2,l.sign); put(IN,r,3,l.oneOff?"Y":"");
+      sc.forEach((s,j)=>put(IN,r,col0+j,l.vals[s.id]==null?null:l.vals[s.id],null,NF));
+    }
+    m.valueRow = r+1; map.push(m); r++;
+  });
+  const totalRow = r+1;
+  put(IN,r,0,`Total ${state.title} (calculated)`);
+  sc.forEach((s,j)=>{ const cl = C(col0+j); put(IN,r,col0+j,calcTotal(s.id)||0, map.length ? map.map(m=>`${cl}${m.valueRow}*$C$${m.valueRow}`).join("+") : "0", NF); });
+  r++;
+  let repRow = null;
+  if(state.useReported){ repRow = r+1; put(IN,r,0,"Reported total"); sc.forEach((s,j)=>put(IN,r,col0+j,state.reported[s.id]==null?null:state.reported[s.id],null,NF)); r++; }
+  finish(IN, r, col0+sc.length-1, [{wch:28},{wch:26},{wch:12},{wch:8}].concat(sc.map(()=>({wch:18}))));
+  X.utils.book_append_sheet(wb, IN, "Inputs");
+
+  // Bridge sheets
+  const used = new Set(["Inputs"]);
+  state.persp.forEach(p=>{
+    const res = computeBridge(p); if(!res.ok) return;
+    let nm = (p.name || "Bridge").replace(/[\[\]:*?\/\\]/g,"").slice(0,28) || "Bridge"; let k = 2; const base0 = nm; while(used.has(nm)){ nm = base0.slice(0,26)+" "+(k++); } used.add(nm);
+    const ws = {}, bi = sc.findIndex(s=>s.id===p.base), ci = sc.findIndex(s=>s.id===p.comp);
+    const BC = C(col0+bi), CC = C(col0+ci);
+    const useRep = repRow && state.useReported && state.reported[p.base]!=null && state.reported[p.comp]!=null;
+    put(ws,0,0,`${state.title}: ${scenName(p.comp)} vs ${scenName(p.base)}`); put(ws,1,0,`Unit: ${state.unit}`);
+    ["Bridge item","Impact","% of start","How it's calculated","Cum","Floor","Down","Up"].forEach((h,c)=>put(ws,3,c,h));
+    let rr = 4; const first = rr+1;
+    const startRef = useRep ? `Inputs!${BC}${repRow}` : `Inputs!${BC}${totalRow}`;
+    const endRef = useRep ? `Inputs!${CC}${repRow}` : `Inputs!${CC}${totalRow}`;
+    put(ws,rr,0,`${scenName(p.base)} ${state.title}`); put(ws,rr,1,res.start,startRef,NF); put(ws,rr,3,"Starting total");
+    put(ws,rr,4,res.start,`B${rr+1}`,NF); put(ws,rr,5,0,null,NF); put(ws,rr,6,0,null,NF); put(ws,rr,7,0,null,NF); rr++;
+    let cum = res.start;
+    res.detail.forEach(it=>{
+      let f, how;
+      if(it.remainder){ f = `(${endRef}-${startRef})-(Inputs!${CC}${totalRow}-Inputs!${BC}${totalRow})`; how = "Reported change minus calculated change"; }
+      else {
+        const l = state.lines[it.lineIdx], m = map[it.lineIdx], sg = `Inputs!$C$${m.valueRow}`;
+        if(it.factor!=null){
+          const fr = m.factorRows, k2 = it.factor;
+          const parts = []; for(let j=0;j<k2;j++) parts.push(`Inputs!${CC}${fr[j]}`);
+          parts.push(`(Inputs!${CC}${fr[k2]}-Inputs!${BC}${fr[k2]})`); for(let j=k2+1;j<fr.length;j++) parts.push(`Inputs!${BC}${fr[j]}`);
+          f = parts.join("*") + "*" + sg;
+          const fn = j => (l.factors[j].name||("Driver "+(j+1)));
+          how = [...Array(k2).keys()].map(j=>fn(j)+" (compare)").concat(["Δ "+fn(k2)]).concat([...Array(fr.length-k2-1).keys()].map(j=>fn(k2+1+j)+" (base)")).join(" × ");
+        } else { f = `(Inputs!${CC}${m.valueRow}-Inputs!${BC}${m.valueRow})*${sg}`; how = "Compare − base"; }
+        if(l.sign===-1) how += " (reduces total)";
+      }
+      cum += it.value;
+      put(ws,rr,0,it.label + (it.oneOff?" (one-off)":"")); put(ws,rr,1,it.value,f,NF); put(ws,rr,2,res.start?it.value/Math.abs(res.start):0,`IFERROR(B${rr+1}/ABS($B$${first}),0)`,"0.0%"); put(ws,rr,3,how);
+      put(ws,rr,4,cum,`E${rr}+B${rr+1}`,NF); put(ws,rr,5,Math.min(cum-it.value,cum),`MIN(E${rr},E${rr+1})`,NF);
+      put(ws,rr,6,it.value<0?-it.value:0,`IF(B${rr+1}<0,-B${rr+1},0)`,NF); put(ws,rr,7,it.value>=0?it.value:0,`IF(B${rr+1}>=0,B${rr+1},0)`,NF); rr++;
+    });
+    put(ws,rr,0,`${scenName(p.comp)} ${state.title}`); put(ws,rr,1,cum,`SUM(B${first}:B${rr})`,NF); put(ws,rr,2,res.pctChg||0,`IFERROR(B${rr+1}/ABS($B$${first})-1,0)`,"0.0%"); put(ws,rr,3,"Ending total");
+    put(ws,rr,4,cum,`B${rr+1}`,NF); put(ws,rr,5,0,null,NF); put(ws,rr,6,0,null,NF); put(ws,rr,7,0,null,NF); rr++;
+    put(ws,rr,0,"Check (should be 0)"); put(ws,rr,1,0,`B${rr}-${endRef}`,NF); rr += 2;
+    put(ws,rr++,0,"Commentary"); commentary(res).forEach(c=>put(ws,rr++,0,c));
+    rr++; put(ws,rr,0,"Tip: select Bridge item + Floor, Down, Up and insert a stacked column chart, then hide the Floor series, to get a waterfall in Excel.");
+    finish(ws, rr, 7, [{wch:36},{wch:14},{wch:10},{wch:52},{wch:12},{wch:12},{wch:12},{wch:12}]);
+    X.utils.book_append_sheet(wb, ws, nm);
+  });
+  return wb;
+}
+document.getElementById("b-xlsx").addEventListener("click", ()=>{
+  if(!window.XLSX){ toast("The Excel library did not load. Check your connection and reload."); return; }
+  try{ const wb = buildWorkbook(); const buf = XLSX.write(wb,{bookType:"xlsx",type:"array"}); saveFile(`${safeName(state.title)}_bridge.xlsx`, new Uint8Array(buf)); }
+  catch(err){ console.error(err); toast("Could not build the Excel file: " + err.message); }
+});
+document.getElementById("b-template").addEventListener("click", ()=>{
+  if(!window.XLSX){ toast("The Excel library did not load. Reload the page."); return; }
+  const rows = [["Line item"].concat(state.scen.map(s=>s.name))];
+  state.lines.forEach((l,i)=>rows.push([lineLabel(l,i)].concat(state.scen.map(s=>{ const v = lineVal(l,s.id); return v==null?"":v; }))));
+  rows.push(["Total (optional, used as reported total)"].concat(state.scen.map(()=>"")));
+  const ws = XLSX.utils.aoa_to_sheet(rows); ws["!cols"] = [{wch:34}].concat(state.scen.map(()=>({wch:18})));
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Data");
+  saveFile("bridge_template.xlsx", new Uint8Array(XLSX.write(wb,{bookType:"xlsx",type:"array"})));
+});
+
+/* ---------- Import ---------- */
+document.getElementById("f-import").addEventListener("change", async e=>{
+  const f = e.target.files[0]; e.target.value = ""; if(!f) return;
+  if(!window.XLSX){ toast("The Excel library did not load. Reload the page."); return; }
+  try{
+    const wb = XLSX.read(await f.arrayBuffer(), {type:"array"});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:""}).filter(r=>r.some(c=>String(c).trim()!==""));
+    if(rows.length<2) throw new Error("The first sheet needs a header row and at least one line item.");
+    const head = rows[0].slice(1).map(x=>String(x).trim());
+    const width = Math.max(...rows.map(r=>r.length)) - 1;
+    const newScen = []; for(let j=0;j<width;j++) newScen.push({id: state.scen[j] ? state.scen[j].id : nid("s"), name: head[j] || ("Column " + (j+1))});
+    const lines = [], reported = {};
+    rows.slice(1).forEach(r=>{
+      const name = String(r[0]).trim(); const vals = Object.fromEntries(newScen.map((s,j)=>[s.id, typeof r[j+1]==="number" ? r[j+1] : parseNum(r[j+1])]));
+      if(/^total\b/i.test(name)){ Object.assign(reported, vals); return; }
+      if(!name && newScen.every(s=>vals[s.id]==null)) return;
+      lines.push({id:nid("l"),name,kind:"value",sign:1,oneOff:/one[- ]?off/i.test(name),vals,factors:[]});
+    });
+    const ids = new Set(newScen.map(s=>s.id));
+    state.scen = newScen; state.lines = lines; state.sample = false;
+    state.reported = reported; if(Object.values(reported).some(v=>v!=null)) state.useReported = true;
+    state.persp.forEach(p=>{ if(!ids.has(p.base)) p.base=""; if(!ids.has(p.comp)) p.comp=""; });
+    renderAll(); save(); toast(`Imported ${lines.length} line items and ${newScen.length} columns from ${f.name}. Check each view's From/To columns.`);
+  }catch(err){ toast("Import failed: " + err.message); }
+});
+
+/* ---------- PDF ---------- */
+const pdfT = s => String(s).replace(/−/g,"-").replace(/→/g,"to").replace(/[‘’]/g,"'").replace(/[“”]/g,'"');
+function svgToPng(svg, W, H){
+  return new Promise((res,rej)=>{
+    const img = new Image(); img.onload = ()=>{ const c = document.createElement("canvas"); c.width = W*2; c.height = H*2; const g = c.getContext("2d"); g.scale(2,2); g.drawImage(img,0,0,W,H); res(c.toDataURL("image/jpeg",0.9)); };
+    img.onerror = rej; img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  });
+}
+document.getElementById("b-pdf").addEventListener("click", async ()=>{
+  if(!window.jspdf){ toast("The PDF library did not load. Reload the page."); return; }
+  try{
+    const doc = new window.jspdf.jsPDF({orientation:"landscape",unit:"pt",format:"a4"});
+    const PW = doc.internal.pageSize.getWidth(), PH = doc.internal.pageSize.getHeight(), M = 36;
+    let first = true, pages = 0;
+    for(const p of state.persp){
+      const r = computeBridge(p); if(!r.ok) continue;
+      if(!first) doc.addPage(); first = false; pages++;
+      doc.setFont("helvetica","bold"); doc.setFontSize(17); doc.setTextColor(19,33,46);
+      doc.text(pdfT(`${state.title} bridge: ${scenName(p.comp)} vs ${scenName(p.base)}`), M, M+10);
+      doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(90,107,123);
+      doc.text(pdfT(`${p.name}  ·  ${state.unit}  ·  Variance ${fmtS(r.delta)} (${pct(r.pctChg)})  ·  ${new Date().toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}`), M, M+26);
+      const ch = waterfallSVG(r, PDF_PAL, 1100, {H:400});
+      const png = await svgToPng(ch.svg, ch.W, ch.H);
+      const iw = PW - 2*M, ih = iw * ch.H / ch.W;
+      doc.addImage(png, "JPEG", M, M+38, iw, ih);
+      let y = M + 38 + ih + 16;
+      doc.setFontSize(10); doc.setTextColor(19,33,46);
+      commentary(r).forEach((c,i)=>{ doc.setFont("helvetica", i===0?"bold":"normal"); const ls = doc.splitTextToSize(pdfT(c), PW-2*M); if(y + ls.length*13 > PH - M){ doc.addPage(); y = M; } doc.text(ls, M, y); y += ls.length*13 + 3; });
+      let cum = r.start;
+      const body = [[scenName(p.base), fmt(r.start), "", fmt(r.start)]].concat(r.items.map(it=>{ cum += it.value; return [it.label + (it.oneOff?" (one-off)":""), fmtS(it.value), r.start?pct(it.value/Math.abs(r.start)):"–", fmt(cum)]; })).concat([[scenName(p.comp), fmt(r.end), pct(r.pctChg), fmt(cum)]]);
+      doc.autoTable({startY:y+6, head:[["Bridge item","Impact","% of base","Running total"]], body: body.map(r=>r.map(pdfT)), margin:{left:M,right:M}, styles:{fontSize:9,cellPadding:4,textColor:[19,33,46]},
+        headStyles:{fillColor:[42,61,80],textColor:255}, columnStyles:{1:{halign:"right"},2:{halign:"right"},3:{halign:"right"}},
+        didParseCell: d=>{ if(d.section==="body" && (d.row.index===0 || d.row.index===body.length-1)) d.cell.styles.fontStyle="bold";
+          if(d.section==="body" && d.column.index===1 && d.row.index>0 && d.row.index<body.length-1){ const v = r.items[d.row.index-1].value; d.cell.styles.textColor = v<0?[180,55,46]:[28,122,78]; } }});
+    }
+    if(!pages){ toast("Nothing to export yet. Add numbers for at least one view."); return; }
+    saveFile(`${safeName(state.title)}_bridge.pdf`, doc.output("arraybuffer"));
+  }catch(err){ console.error(err); toast("Could not build the PDF: " + err.message); }
+});
+
+/* ---------- misc ---------- */
+let toastT;
+function toast(msg){ const t = document.getElementById("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(()=>{ t.hidden = true; }, 3200); }
+function renderAll(){ syncSettings(); renderGrid(); renderTabs(); renderPerspEdit(); renderBridge(); resetButtons(); }
+if(!state.persp.find(p=>p.id===state.active)) state.active = state.persp[0] && state.persp[0].id;
+renderAll();
+let rzT; window.addEventListener("resize", ()=>{ clearTimeout(rzT); rzT = setTimeout(renderBridge, 150); });
+try{ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderBridge); }catch(e){}
+new MutationObserver(renderBridge).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+getDownloads();
+})();
+</script>
