@@ -70,7 +70,7 @@ table.grid{border-collapse:collapse;width:100%;min-width:760px}
 .grid th,.grid td{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:0;vertical-align:middle}
 .grid th:last-child,.grid td:last-child{border-right:0}
 .grid thead th{background:var(--cell);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;text-align:left;padding:8px}
-.grid thead th.scen{padding:4px;min-width:130px}
+.grid thead th.scen{padding:4px;min-width:160px}
 .grid thead th.scen input{width:100%;font-weight:600;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink);border-color:transparent;background:transparent}
 .grid thead th.scen input:hover{border-color:var(--line-strong)}
 .scen-head{display:flex;align-items:center;gap:2px}
@@ -163,7 +163,7 @@ table.bt{border-collapse:collapse;width:100%;font-size:13.5px}
     </div>
     <div class="grid-scroll"><table class="grid" id="grid"></table></div>
     <div class="hint">
-      <span><b>Amount</b>: one number per column. <b>Drivers</b>: e.g. Orders × Revenue per order; the bridge splits volume and rate.</span>
+      <span><b>Amount</b>: one number per column. <b>Drivers</b>: e.g. Customers × ARPU; the bridge splits volume and rate.</span>
       <span><b>Paste from Excel</b>: click any cell and paste a block. Paste rows with names into a line-item cell to add them all.</span>
       <span><b>Sign</b>: use “− reduces” for costs in a profit bridge.</span>
     </div>
@@ -188,7 +188,7 @@ table.bt{border-collapse:collapse;width:100%;font-size:13.5px}
 <script>
 (function(){
 "use strict";
-const STORE_KEY = "bridge-builder-v1";
+const STORE_KEY = "bridge-builder-v2";
 let uid = 0; const nid = p => p + Date.now().toString(36) + (uid++);
 
 /* ---------- state ---------- */
@@ -201,15 +201,15 @@ function sampleState(){
     persp:[{id:"p1",name:"vs Last Year",base:"ly",comp:"act"},{id:"p2",name:"vs Budget",base:"bud",comp:"act"},{id:"p3",name:"Quarter over quarter",base:"pq",comp:"act"}],
     active:"p1", reported:{},
     lines:[
-      {id:"l1",name:"Subscriptions",kind:"drivers",sign:1,oneOff:false,vals:{},factors:[
-        {name:"Subscriber-months ('000)",vals:mk([119.3,128.6,128.4,121.8])},{name:"ARPU (USD)",vals:mk([37.9,37.95,39.4,37.6])}]},
-      {id:"l2",name:"Shipping",kind:"drivers",sign:1,oneOff:false,vals:{},factors:[
-        {name:"Monetized orders ('000)",vals:mk([6220,4570,6450,5900])},{name:"Revenue per order (USD)",vals:mk([1.59,1.88,1.80,1.57])}]},
-      {id:"l3",name:"Payments",kind:"drivers",sign:1,oneOff:false,vals:{},factors:[
-        {name:"GMV (USD '000)",vals:mk([865000,700000,870000,840000])},{name:"Payment penetration",vals:mk([0.848,0.803,0.813,0.84])},{name:"Take rate",vals:mk([0.0147,0.01473,0.01475,0.0146])}]},
-      {id:"l4",name:"Advertising",kind:"value",sign:1,oneOff:false,vals:mk([245,0,750,210]),factors:[]},
-      {id:"l5",name:"Other revenue",kind:"value",sign:1,oneOff:false,vals:mk([330,318,441,305]),factors:[]},
-      {id:"l6",name:"Contract settlement",kind:"value",sign:1,oneOff:true,vals:mk([180,0,0,0]),factors:[]}
+      {id:"l1",name:"Subscription revenue",kind:"drivers",sign:1,oneOff:false,vals:{},factors:[
+        {name:"Active customers ('000)",vals:mk([52.0,46.0,54.0,50.5])},{name:"ARPU (USD)",vals:mk([120,115,125,119])}]},
+      {id:"l2",name:"Usage revenue",kind:"drivers",sign:1,oneOff:false,vals:{},factors:[
+        {name:"Units sold ('000)",vals:mk([310,260,330,300])},{name:"Price per unit (USD)",vals:mk([8.5,9.0,8.75,8.6])}]},
+      {id:"l3",name:"Professional services",kind:"drivers",sign:1,oneOff:false,vals:{},factors:[
+        {name:"Projects delivered",vals:mk([42,38,45,40])},{name:"Avg project value (USD '000)",vals:mk([35,32,36,34])}]},
+      {id:"l4",name:"Partner revenue",kind:"value",sign:1,oneOff:false,vals:mk([480,410,520,455]),factors:[]},
+      {id:"l5",name:"Other income",kind:"value",sign:1,oneOff:false,vals:mk([95,110,100,90]),factors:[]},
+      {id:"l6",name:"One-time licence deal",kind:"value",sign:1,oneOff:true,vals:mk([250,0,0,0]),factors:[]}
     ]
   };
 }
@@ -224,7 +224,10 @@ let state;
 try{ const raw = localStorage.getItem(STORE_KEY); state = raw ? JSON.parse(raw) : null; }catch(e){ state = null; }
 if(!state || !Array.isArray(state.lines) || !Array.isArray(state.scen)) state = sampleState();
 let saveT;
-function save(){ clearTimeout(saveT); saveT = setTimeout(()=>{ try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){} }, 300); }
+function persist(){ clearTimeout(saveT); saveT = null; try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){} }
+function save(){ clearTimeout(saveT); saveT = setTimeout(persist, 300); }
+window.addEventListener("pagehide", ()=>{ if(saveT) persist(); });
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="hidden" && saveT) persist(); });
 
 /* ---------- numbers ---------- */
 function parseNum(s){
@@ -341,7 +344,7 @@ function renderGrid(){
       <td><select data-act="sign" data-line="${l.id}" aria-label="Sign"><option value="1"${l.sign===1?" selected":""}>+ adds</option><option value="-1"${l.sign===-1?" selected":""}>− reduces</option></select></td>
       <td class="ctr"><input type="checkbox" data-act="oneoff" data-line="${l.id}" ${l.oneOff?"checked":""} aria-label="One-off"></td>`;
     if(l.kind==="drivers"){
-      h += `<tr class="lineDrv"><td class="name"><input type="text" data-act="name" data-line="${l.id}" value="${esc(l.name)}" placeholder="e.g. Shipping revenue"></td>${common}`;
+      h += `<tr class="lineDrv"><td class="name"><input type="text" data-act="name" data-line="${l.id}" value="${esc(l.name)}" placeholder="e.g. Subscription revenue"></td>${common}`;
       sc.forEach(s=>{ h += `<td class="calc" data-calc="${l.id}" data-scen="${s.id}">${fmt(lineVal(l,s.id))}</td>`; });
       h += `<td class="act"><button class="btn ghost" data-act="del-line" data-line="${l.id}" title="Remove line" aria-label="Remove line">×</button></td></tr>`;
       l.factors.forEach((f,k)=>{
@@ -351,7 +354,7 @@ function renderGrid(){
         h += `<td class="act"></td></tr>`; row++;
       });
     } else {
-      h += `<tr><td class="name"><input type="text" data-act="name" data-line="${l.id}" value="${esc(l.name)}" placeholder="e.g. Subscriptions"></td>${common}`;
+      h += `<tr><td class="name"><input type="text" data-act="name" data-line="${l.id}" value="${esc(l.name)}" placeholder="e.g. Partner revenue"></td>${common}`;
       sc.forEach(s=>{ h += numInput(s.id, l.vals[s.id], `data-line="${l.id}" data-row="${row}"`); });
       h += `<td class="act"><button class="btn ghost" data-act="del-line" data-line="${l.id}" title="Remove line" aria-label="Remove line">×</button></td></tr>`; row++;
     }
